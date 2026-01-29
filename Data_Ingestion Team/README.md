@@ -1,251 +1,243 @@
 
+# ✅ Data Ingestion Team
 
-# 📕 README.md
-
-## **Data Ingestion Team**
-
----
-
-## 🧭 Team Overview
-
-The **Data Ingestion Team** is responsible for designing and implementing the **entry point of the Real-Time Financial Fraud Detection & Monitoring System**. This team ensures that historical financial transaction data is **reliably converted into real-time streaming events** and ingested into the platform using **fault-tolerant, scalable streaming pipelines**.
-
-This team lays the foundation for all downstream analytics, machine learning, and dashboards by delivering **high-quality raw streaming data** into the **Bronze Layer** of the Medallion Architecture.
+## (Bronze Layer + Streaming Ingestion)
 
 ---
 
-## 🎯 Key Responsibilities
+# 📌 Role: Data Ingestion Engineer
 
-### 🔄 Streaming Data Simulation
+### Real-Time Financial Fraud Detection & Monitoring System
 
-* Convert **historical IEEE-CIS fraud data** into **continuous live-like streams**
-* Emit transactions as incremental files (JSON/CSV)
-* Simulate real-world transaction arrival patterns
-
-### 📥 Streaming Ingestion
-
-* Ingest streaming files using **Databricks Auto Loader**
-* Enforce schema consistency
-* Capture ingestion metadata
-* Ensure **append-only**, **exactly-once** semantics
-
-### 🥉 Bronze Layer Management
-
-* Store **raw, unmodified streaming data**
-* Preserve source fidelity for auditing and reprocessing
-* Maintain ingestion lineage and metadata
+**Responsibility:** Build the real-time ingestion pipeline that brings raw transaction events into Databricks reliably.
 
 ---
 
-## 📊 Data Sources
+## 1. Objective of Ingestion Layer
 
-### Dataset Used
+Banks generate millions of transactions per day.
+Fraud detection systems must ingest this data **continuously** with:
 
-**IEEE-CIS Fraud Detection Dataset (Kaggle)**
-A large-scale, industry-standard dataset widely used for fraud detection research.
+* Low latency
+* Fault tolerance
+* Scalability
+* Schema safety
 
-### Files Handled
+The ingestion engineer ensures:
 
-| File Name               | Purpose                                          |
-| ----------------------- | ------------------------------------------------ |
-| `train_transaction.csv` | Historical transaction records with fraud labels |
-| `test_transaction.csv`  | Unlabeled transaction data                       |
-| `train_identity.csv`    | Device and network metadata                      |
-| `test_identity.csv`     | Identity metadata for test data                  |
-| `sample_submission.csv` | Reference file (not ingested)                    |
-
-> ⚠️ **Important:**
-> `sample_submission.csv` is **not ingested**. It is used only for Kaggle submissions and has **no role in streaming ingestion**.
+✅ Raw events arrive safely
+✅ No transaction is lost
+✅ Streaming pipeline is production-ready
 
 ---
 
-## 🧠 Dataset Characteristics
+## 2. Data Source (Free & Open)
 
-* **Total Transactions:** 590,540
-* **Fraud Rate:** ~3.5%
-* **Time Span:** 6 months
-* **Join Key:** `TransactionID`
-* **Label:** `isFraud` (binary)
+### Dataset Used: IEEE-CIS Fraud Detection (Kaggle)
 
-### Critical Insight (Fraud Labeling Logic)
+This dataset simulates real-world fraud behavior and contains:
 
-Fraud labeling is **account-based**, not transaction-based.
-Once a chargeback occurs, **all subsequent transactions linked to the same account or email are labeled as fraud**.
+### Transaction Table
 
-This impacts:
+* `TransactionAmt`
+* `ProductCD`
+* `card1–card6`
+* `addr1, addr2`
+* Fraud label: `isFraud`
 
-* Streaming simulation realism
-* ML interpretation downstream
+### Identity Table
 
----
+* `DeviceType`
+* `DeviceInfo`
 
-## 🏗️ Ingestion Architecture
+Joined by:
 
 ```
-Historical CSV Files
-        ↓
-Python Streaming Generator
-        ↓
-Streaming Source Folder
-        ↓
-Databricks Auto Loader
-        ↓
-Bronze Layer (Delta Table)
-```
-
-✔ Fully streaming
-✔ Fault-tolerant
-✔ Schema-enforced
-✔ Free & open-source
-
----
-
-## 📂 Folder Structure (Team Scope)
-
-```
-data/
-├── historical/
-│   ├── train_transaction.csv
-│   ├── test_transaction.csv
-│   ├── train_identity.csv
-│   └── test_identity.csv
-│
-├── streaming_source/
-│   └── txn_<timestamp>.csv
+TransactionID
 ```
 
 ---
 
-## 🔁 Streaming Data Generator
+## 3. Why Streaming Simulation is Required
+
+Real banking streams are not publicly available.
+So we simulate real-time transactions using:
+
+* Historical dataset replay
+* Python streaming generator
+* Incremental file arrival
+
+This mimics:
+
+* Kafka-style event streams
+* Live banking transaction feeds
+
+---
+
+## 4. Streaming Data Generator (Phase 2)
 
 ### Purpose
 
-Simulates **real-time transaction events** from historical data.
+Convert historical CSV rows into live streaming batches.
 
-### Design Principles
+### Output Format
 
-* Micro-batch file generation
-* Time-based emission
-* Stateless generation
-* Reproducible & configurable
+* JSON micro-batches
+* Written every few seconds
 
-### Generator Logic
+Example:
 
-* Randomly sample historical rows
-* Attach:
+```
+batch_001.json
+batch_002.json
+batch_003.json
+```
 
-  * Event ID
-  * Event timestamp
-* Write small batches every few seconds
+### Generator Folder
 
-### Sample Generator Code
+```
+/Volumes/.../fraud_stream/input/
+```
+
+### Why JSON?
+
+* Flexible schema
+* Auto Loader friendly
+* Supports nested metadata
+
+---
+
+## 5. Bronze Layer Design
+
+### Bronze = Raw Streaming Landing Zone
+
+Bronze stores:
+
+* Raw transaction fields
+* No transformations
+* Append-only ingestion
+* Source metadata
+
+### Bronze Table
+
+```
+stream_bronze_data
+```
+
+Location:
+
+```
+angad_kumar91.fraud_detection_bronzelayer.stream_bronze_data
+```
+
+---
+
+## 6. Auto Loader Ingestion (Structured Streaming)
+
+### Why Auto Loader?
+
+Auto Loader provides:
+
+✅ Incremental ingestion
+✅ Schema evolution
+✅ Fault tolerance
+✅ Exactly-once processing
+
+### Core Streaming Code
 
 ```python
-import pandas as pd
-import time, uuid
-
-src = "/dbfs/FileStore/data/historical/train_transaction.csv"
-out = "/dbfs/FileStore/data/streaming_source/"
-
-df = pd.read_csv(src)
-
-while True:
-    batch = df.sample(10)
-    batch["event_id"] = [str(uuid.uuid4()) for _ in range(len(batch))]
-    batch["event_timestamp"] = pd.Timestamp.utcnow()
-    batch.to_csv(out + f"txn_{int(time.time())}.csv", index=False)
-    time.sleep(5)
+bronze_df = (
+    spark.readStream
+        .format("cloudFiles")
+        .option("cloudFiles.format", "json")
+        .option("cloudFiles.schemaLocation", schema_path)
+        .load(streaming_input_path)
+)
 ```
 
 ---
 
-## 📥 Bronze Layer Ingestion
+## 7. Metadata Captured in Bronze
 
-### Technology Used
+Auto Loader automatically adds:
 
-* **Databricks Structured Streaming**
-* **Auto Loader (cloudFiles)**
-* **Delta Lake**
+| Column                 | Purpose                   |
+| ---------------------- | ------------------------- |
+| `_ingestion_timestamp` | When data arrived         |
+| `_source_file`         | File origin               |
+| `_file_size`           | File size                 |
+| `_rescued_data`        | Corrupt/unexpected fields |
 
-### Bronze Table Characteristics
+This is critical for:
 
-* Append-only
-* No transformations
-* Schema enforced
-* Ingestion metadata captured
+* Audit compliance
+* Debugging
+* Replay capability
 
-### Bronze Table Schema Includes
+---
 
-* All raw transaction fields
-* `event_timestamp`
-* `_ingestion_timestamp`
-* `_source_file`
-* `_file_size`
-* `_file_mod_time`
+## 8. Streaming Write into Delta Bronze Table
 
-### Sample Ingestion Query
-
-```sql
-CREATE OR REPLACE TABLE stream_bronze_data
-USING DELTA
-AS
-SELECT *
-FROM STREAM read_files(
-  '/FileStore/data/streaming_source',
-  format => 'csv',
-  header => true
-);
+```python
+(
+  bronze_df.writeStream
+    .format("delta")
+    .outputMode("append")
+    .option("checkpointLocation", checkpoint_path)
+    .trigger(availableNow=True)
+    .table("stream_bronze_data")
+)
 ```
 
----
+### Key Concepts
 
-## 🥉 Bronze Layer Design Principles
+#### Checkpointing
 
-| Principle          | Reason                 |
-| ------------------ | ---------------------- |
-| Raw data only      | Enables reprocessing   |
-| No business logic  | Separation of concerns |
-| Append-only        | Streaming safety       |
-| Metadata preserved | Audit & lineage        |
+Stores progress so Spark can recover after failure.
 
----
+#### availableNow Trigger
 
-## 🔐 Data Quality & Reliability
-
-* Schema inference + enforcement
-* Corrupt records captured via `_rescued_data`
-* Fault-tolerant ingestion
-* Exactly-once processing semantics
+Processes all available files once (best for POC).
 
 ---
 
-## 🚫 What This Team Does NOT Do
+## 9. Bronze Layer Guarantees
 
-❌ Data cleaning
-❌ Feature engineering
-❌ Aggregations
-❌ ML logic
-❌ Fraud scoring
+Bronze ensures:
 
-These are handled by **Data Transformation** and **ML Analytics teams**.
-
----
-
-## 🧠 How This Team Adds Value
-
-> A fraud detection system is only as reliable as its ingestion layer.
-
-This team ensures:
-
-* Continuous data availability
-* Real-time realism
-* Reproducibility
-* Strong architectural foundation
+✅ Raw truth preserved
+✅ Data never overwritten
+✅ Replay possible
+✅ Foundation for Silver transformations
 
 ---
 
-##  Summary
+## 10. Common Interview Questions (Ingestion)
 
-> “The Data Ingestion Team converts historical IEEE-CIS fraud data into real-time streaming events and ingests them using Databricks Auto Loader into a fault-tolerant Bronze layer, forming the foundation of the entire fraud detection pipeline.”
+### Q1: Why Bronze Layer?
+
+Because raw data must be stored unchanged for audit and reprocessing.
+
+### Q2: Why Auto Loader instead of manual streaming?
+
+Auto Loader handles:
+
+* schema drift
+* incremental discovery
+* scalability
+
+### Q3: What happens if ingestion fails?
+
+Checkpoint ensures Spark resumes exactly where it stopped.
+
+---
+
+## 11. Output of Ingestion Engineer
+
+By the end of this role, we deliver:
+
+* Streaming transaction ingestion
+* Bronze Delta table
+* Fault-tolerant pipeline foundation
 
 ---
