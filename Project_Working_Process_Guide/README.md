@@ -450,18 +450,6 @@ Gold tables drive:
 
 ---
 
-# ✅ Final Project Outcome
-
-This system achieves:
-
-✔ Real-time ingestion
-✔ Clean Silver transaction pipeline
-✔ Streaming behavioral fraud features
-✔ ML anomaly detection with Isolation Forest
-✔ Model tracking using MLflow
-✔ Gold dashboards for fraud analytics
-
----
 
 # 🎤 Final Summary
 
