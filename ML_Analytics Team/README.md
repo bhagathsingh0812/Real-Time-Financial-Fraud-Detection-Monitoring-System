@@ -1,238 +1,393 @@
 
-# 📙 README.md
+# ✅ ML Engineer
 
-## **ML & Analytics Team**
-
----
-
-## 🧭 Team Overview
-
-The **ML & Analytics Team** is responsible for designing, training, validating, deploying, and operationalizing machine learning models to **detect suspicious financial transactions in real time**.
-
-This team consumes **clean Silver-layer data**, applies **anomaly detection models**, performs **model lifecycle management using MLflow**, and delivers **ML-scored outputs into the Gold layer** for downstream dashboards and business decisions.
+## Isolation Forest + MLflow + Real-Time Fraud Scoring
 
 ---
 
-## 🎯 Key Responsibilities
+# 📌 Role: Machine Learning Engineer
 
-### 🤖 Model Development
+### Real-Time Financial Fraud Detection & Monitoring System
 
-* Select suitable fraud detection algorithms
-* Train models using historical behavioral data
-* Validate performance using labeled data
-
-### 📦 Model Lifecycle Management
-
-* Track experiments with MLflow
-* Register models using Unity Catalog
-* Version and deploy models safely
-
-### ⚡ Real-Time Fraud Scoring
-
-* Apply trained models to streaming transactions
-* Generate fraud scores and anomaly flags
-* Write scored outputs into Gold tables
-
-### 📊 Analytical Outputs
-
-* Enable fraud trend analysis
-* Support dashboard visualizations
-* Provide explainable metrics for stakeholders
+**Responsibility:** Train anomaly detection model, register with MLflow, and deploy it for real-time fraud scoring.
 
 ---
 
-## 🧠 Model Selection Strategy
+## 1. Objective of ML in Fraud Detection
 
-### Why Anomaly Detection?
+Fraud detection is fundamentally an **anomaly detection problem**:
 
-Fraud is:
+* Fraud transactions are rare (~3.5%)
+* Fraud patterns evolve continuously
+* Labels are limited or delayed
 
-* Rare (~3.5%)
-* Evolving
-* Often unlabeled in real-time
+So instead of supervised classification, we use:
 
-### Chosen Model: **Isolation Forest**
+✅ Unsupervised anomaly detection
+→ Isolation Forest
 
-| Reason        | Explanation                    |
-| ------------- | ------------------------------ |
-| Unsupervised  | Does not rely solely on labels |
-| Scalable      | Handles large feature sets     |
-| Interpretable | Produces anomaly scores        |
-| Proven        | Widely used in financial fraud |
+Goal:
+
+> Assign each transaction a fraud_score in real time
 
 ---
 
-## 📊 Training Data Preparation
+## 2. Why Isolation Forest?
 
-### Input Sources
+Isolation Forest is ideal because:
 
-* `silver_transactions_base`
-* Batch-generated behavioral features
+* Works without needing many fraud labels
+* Handles high-dimensional features
+* Efficient for large-scale streaming scoring
 
-### Feature Categories
+### Core Idea
 
-| Type              | Examples                  |
-| ----------------- | ------------------------- |
-| Transaction-level | Amount, log amount        |
-| Behavioral        | Txn count, avg amount     |
-| Risk indicators   | High-value, international |
+Fraud transactions are:
 
-### Key Design Rule
+* rare
+* different
+* easier to isolate in decision trees
 
-> **Training is always done in BATCH.**
+Isolation Forest outputs:
 
-Streaming data is **never used directly** for training due to:
-
-* Non-determinism
-* Late-arriving data
-* Reproducibility issues
+* anomaly score
+* prediction (-1 anomaly, +1 normal)
 
 ---
 
-## 🧪 Model Training Workflow
+## 3. ML Training Dataset Source
+
+We train using Silver layer output:
 
 ```
-Silver Base Table
-        ↓
-Batch Feature Aggregation
-        ↓
-Feature Vector Construction
-        ↓
-Isolation Forest Training
-        ↓
-Model Evaluation
-        ↓
-MLflow Registration
+silver_transactions_base
+```
+
+This contains:
+
+* clean schema
+* row-level fraud features
+* ML-ready columns
+
+---
+
+## 4. Feature Set Used in Model Training
+
+Model expects exactly these 8 features:
+
+| Feature                | Type   | Meaning             |
+| ---------------------- | ------ | ------------------- |
+| TransactionAmt         | double | Transaction amount  |
+| log_transaction_amount | double | Normalized amount   |
+| is_high_value_txn      | int    | High-value flag     |
+| is_international_txn   | int    | Location mismatch   |
+| txn_count_5min         | long   | Burst frequency     |
+| avg_amount_5min        | double | Spending average    |
+| stddev_amount_5min     | double | Spending volatility |
+| product_diversity_5min | long   | Merchant diversity  |
+
+These features capture both:
+
+* transaction-level risk
+* behavioral anomalies
+
+---
+
+## 5. Model Training Pipeline (Industry Standard)
+
+We build a scikit-learn pipeline:
+
+```python
+pipeline = Pipeline(steps=[
+    ("scaler", StandardScaler()),
+    ("iforest", IsolationForest(
+        n_estimators=200,
+        contamination=0.035,
+        random_state=42
+    ))
+])
+```
+
+### Why scaling?
+
+Isolation Forest performs better when features are normalized.
+
+---
+
+## 6. Training Process
+
+We convert Spark → Pandas (POC scale):
+
+```python
+pdf = training_df.select(feature_cols + ["isFraud"]).toPandas()
+
+X = pdf[feature_cols]
+y = pdf["isFraud"]
+```
+
+Then train:
+
+```python
+pipeline.fit(X)
 ```
 
 ---
 
-## 📦 MLflow Integration (Unity Catalog)
+## 7. Fraud Scoring Logic
 
-### Why MLflow?
+Isolation Forest outputs decision scores:
 
-* Experiment tracking
-* Parameter & metric logging
-* Model versioning
-* Deployment control
+```python
+raw_scores = pipeline.named_steps["iforest"].decision_function(X)
+fraud_scores = -raw_scores
+```
 
-### Key Constraints Addressed
+Meaning:
 
-* Unity Catalog does not support model stages
-* Model aliases are used instead
-* Model signatures are mandatory
+* Higher fraud_score → more suspicious
 
----
+We define anomaly flag:
 
-## 🧠 Model Evaluation Metrics
-
-Although the model is unsupervised, **labels are used ONLY for evaluation**:
-
-| Metric  | Purpose                 |
-| ------- | ----------------------- |
-| ROC-AUC | Ranking effectiveness   |
-| PR-AUC  | Fraud detection quality |
+```python
+is_anomaly = fraud_score > threshold
+```
 
 ---
 
-## ⚡ Real-Time Scoring Architecture
+## 8. Model Evaluation (POC Metrics)
 
-### Scoring Strategy
+Even though model is unsupervised, we use labels only for evaluation:
 
-| Aspect    | Decision       |
-| --------- | -------------- |
-| Training  | Batch          |
-| Scoring   | Streaming      |
-| Execution | `foreachBatch` |
-| Trigger   | `availableNow` |
+### ROC-AUC
 
-### Why `foreachBatch`?
+```python
+roc_auc = roc_auc_score(y, fraud_scores)
+```
 
-* Allows ML inference on micro-batches
-* Enables Pandas-based ML inference
-* Avoids streaming state complexity
+### PR-AUC
 
----
+```python
+precision, recall, _ = precision_recall_curve(y, fraud_scores)
+pr_auc = auc(recall, precision)
+```
 
-## 🥇 Gold Layer Outputs
-
-### Primary Table
-
-| Table               | Purpose                |
-| ------------------- | ---------------------- |
-| `fraud_predictions` | ML-scored transactions |
-
-### Schema
-
-| Column          | Description       |
-| --------------- | ----------------- |
-| TransactionID   | Unique ID         |
-| event_timestamp | Event time        |
-| card1           | Entity identifier |
-| TransactionAmt  | Amount            |
-| fraud_score     | Anomaly score     |
-| is_anomaly      | Binary flag       |
+These metrics help validate detection performance.
 
 ---
 
-## 🚨 Operational Challenges Solved
-
-### 1️⃣ Checkpoint Reprocessing
-
-* `availableNow` processes only new data
-* Checkpoint reset used during development
-* Stable checkpoints in production
-
-### 2️⃣ Empty Streaming Batches
-
-* Handled gracefully in `foreachBatch`
-* Prevented table creation failures
-
-### 3️⃣ Schema Drift & Metadata Conflicts
-
-* Gold tables pre-created
-* Ingestion metadata excluded
+# ✅ MLflow Integration (Enterprise Requirement)
 
 ---
 
-## 📊 Analytical Capabilities Enabled
+## 9. Why MLflow?
 
-The outputs of this team power:
+MLflow provides:
 
-* Fraud trend analysis
-* High-risk entity detection
-* Alert dashboards
-* Business impact reporting
+* experiment tracking
+* model versioning
+* registry deployment
+* reproducibility
 
----
+Fraud models must be:
 
-## 🚫 What This Team Does NOT Do
-
-❌ Raw data ingestion
-❌ Data cleaning
-❌ Dashboard UI design
-
-Those responsibilities belong to **Ingestion**, **Transformation**, and **Dashboard teams**.
+* auditable
+* controlled
+* version-managed
 
 ---
 
-## 🧠 How This Team Adds Value
+## 10. Logging Model with Signature (Unity Catalog)
 
-> A model is only valuable if it can operate reliably in real time.
+Unity Catalog requires:
 
-This team ensures:
+* input schema signature
+* input example
 
-* Trustworthy fraud detection
-* Scalable ML deployment
-* Business-aligned outputs
-* End-to-end ML accountability
+```python
+from mlflow.models.signature import infer_signature
+
+signature = infer_signature(X, pipeline.predict(X))
+
+mlflow.sklearn.log_model(
+    pipeline,
+    artifact_path="model",
+    signature=signature,
+    input_example=X.iloc[:5]
+)
+```
+
+### Why signature matters?
+
+Prevents inference errors by enforcing feature schema.
 
 ---
 
-## 🎤 Summary
+## 11. Model Registration
 
-> “The ML & Analytics Team operationalizes anomaly detection models using Isolation Forest and MLflow, enabling real-time fraud scoring through structured streaming and delivering analytics-ready Gold outputs for monitoring and decision-making.”
+```python
+mlflow.sklearn.log_model(
+    pipeline,
+    artifact_path="model",
+    registered_model_name="fraud_isolation_forest"
+)
+```
+
+Now model appears in Databricks Model Registry.
 
 ---
 
+## 12. Unity Catalog Deployment via Alias
 
+Stages like Production are not supported in UC.
+
+Instead we assign alias:
+
+```
+@prod
+```
+
+Model load:
+
+```python
+model_uri = "models:/fraud_isolation_forest@prod"
+fraud_model = mlflow.pyfunc.load_model(model_uri)
+```
+
+This is industry deployment standard.
+
+---
+
+# ✅ Real-Time Fraud Scoring (Streaming Deployment)
+
+---
+
+## 13. Streaming Scoring Architecture
+
+```
+Silver Base Stream
+     ↓
+Batch behavioral snapshot
+     ↓
+MLflow model inference
+     ↓
+Gold fraud_predictions table
+```
+
+---
+
+## 14. Why foreachBatch?
+
+Spark ML models cannot directly run inside streaming transformations.
+
+So we use:
+
+```python
+.writeStream.foreachBatch(score_batch)
+```
+
+This allows:
+
+* micro-batch Pandas inference
+* safe Gold writes
+
+---
+
+## 15. Production Scoring Function
+
+Key steps:
+
+1. Convert batch → Pandas
+2. Cast types strictly
+3. Apply model
+4. Write Gold results
+
+```python
+def score_batch(batch_df, batch_id):
+
+    pdf = batch_df.toPandas()
+
+    X = pdf[feature_cols].astype(expected_types)
+
+    anomaly_scores = fraud_model.predict(X)
+
+    pdf["fraud_score"] = -anomaly_scores
+    pdf["is_anomaly"] = (pdf["fraud_score"] > 0.6)
+
+    spark.createDataFrame(pdf_out).write.insertInto("fraud_predictions")
+```
+
+---
+
+## 16. Gold Output Table
+
+Final fraud scoring table:
+
+```
+fraud_predictions
+```
+
+Contains:
+
+| Column          | Purpose          |
+| --------------- | ---------------- |
+| TransactionID   | Transaction key  |
+| event_timestamp | Event time       |
+| TransactionAmt  | Amount           |
+| fraud_score     | Suspicion score  |
+| is_anomaly      | Fraud alert flag |
+
+This table powers dashboards.
+
+---
+
+## 17. Key Streaming Lesson: Checkpoints
+
+Streaming writes depend on checkpoint state.
+
+If rows read = 0:
+
+* no new data since checkpoint
+* reset checkpoint during development
+
+Production:
+
+* checkpoint stays stable
+
+---
+
+# 🎤 Interview Questions (ML Engineer)
+
+---
+
+### Q1: Why Isolation Forest?
+
+Fraud is rare, unsupervised anomaly detection is practical.
+
+### Q2: Why MLflow?
+
+Enterprise requires model versioning, governance, reproducibility.
+
+### Q3: Why model signature?
+
+Ensures inference schema consistency and prevents silent errors.
+
+### Q4: Why foreachBatch?
+
+Allows applying Python ML models safely in streaming pipelines.
+
+### Q5: What does fraud_score mean?
+
+Higher score = transaction is more anomalous and suspicious.
+
+---
+
+# ✅ Output of ML Engineer
+
+ML Engineer delivers:
+
+* Isolation Forest anomaly model
+* MLflow registered deployment
+* Real-time scoring pipeline
+* Gold fraud prediction dataset
+
+---
